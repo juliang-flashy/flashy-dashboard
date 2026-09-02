@@ -623,10 +623,15 @@ thead th{line-height:1.3}
               <th data-sort="var_tx">Var.<br>Trans.</th>
               <th data-sort="uds">Uds.</th>
               <th data-sort="var_uds">Var.<br>Uds.</th>
-              <th data-sort="tc">TC%</th>
-              <th data-sort="var_tc">Var.<br>TC</th>
-              <th data-sort="ents">Entradas</th>
-              <th data-sort="trans">Transeúntes</th>
+              <th id="th-tc-act" data-sort="tc">TC% Act.</th>
+              <th id="th-tc-ant" data-sort="tc_ant">TC% Ant.</th>
+              <th data-sort="var_tc">Var.<br>TC (pp)</th>
+              <th id="th-ent-act" data-sort="ents">Entradas Act.</th>
+              <th id="th-ent-ant" data-sort="ents_ant">Entradas Ant.</th>
+              <th data-sort="var_ents">Var.<br>Entradas</th>
+              <th id="th-trans-act" data-sort="trans">Transeúntes Act.</th>
+              <th id="th-trans-ant" data-sort="trans_ant">Transeúntes Ant.</th>
+              <th data-sort="var_trans">Var.<br>Transeúntes</th>
             </tr>
           </thead>
           <tbody id="tbody-variacion"></tbody>
@@ -1375,6 +1380,12 @@ function renderVariacion() {
   document.getElementById('th-v-ant').textContent = 'Ventas ' + anioAnt;
   document.getElementById('vs-lbl-act').textContent = 'VENTAS ' + anio;
   document.getElementById('vs-lbl-ant').textContent = 'VENTAS ' + anioAnt;
+  document.getElementById('th-tc-act').textContent    = 'TC% ' + anio;
+  document.getElementById('th-tc-ant').textContent    = 'TC% ' + anioAnt;
+  document.getElementById('th-ent-act').textContent   = 'Entradas ' + anio;
+  document.getElementById('th-ent-ant').textContent   = 'Entradas ' + anioAnt;
+  document.getElementById('th-trans-act').textContent = 'Transeúntes ' + anio;
+  document.getElementById('th-trans-ant').textContent = 'Transeúntes ' + anioAnt;
 
   // Day range filter (only active when a month is selected)
   const dDesde = +document.getElementById('f-v-dia-desde').value || 1;
@@ -1406,7 +1417,7 @@ function renderVariacion() {
 
     if (!bySuc[r.sucursal]) bySuc[r.sucursal] = {
       p:0, v:0, tx:0, tx_tc:0, uds:0, ent:0, ents:0, trans:0,  // año actual
-      vp:0, txp:0, txp_tc:0, udsp:0, entp:0                     // año anterior
+      vp:0, txp:0, txp_tc:0, udsp:0, entp:0, entsp:0, transp:0  // año anterior
     };
     const s = bySuc[r.sucursal];
     const tc = r.TC || 0;
@@ -1422,9 +1433,11 @@ function renderVariacion() {
         s.tx_tc += r.transacciones || 0;          // solo días con contador
       }
     } else {
-      s.vp    += r.ventas_netas  || 0;
-      s.txp   += r.transacciones || 0;
-      s.udsp  += r.unidades      || 0;
+      s.vp     += r.ventas_netas  || 0;
+      s.txp    += r.transacciones || 0;
+      s.udsp   += r.unidades      || 0;
+      s.entsp  += r.entradas      || 0;
+      s.transp += r.transeuntes   || 0;
       if (tc > 0) {
         s.entp   += (r.transacciones || 0) / tc;
         s.txp_tc += r.transacciones || 0;
@@ -1455,8 +1468,13 @@ function renderVariacion() {
       vup,   var_vup:   vupp  > 0 && vup  != null ? (vup  - vupp)  / vupp  : null,
       tx:    d.tx,  var_tx:   d.txp  > 0 ? (d.tx  - d.txp)  / d.txp  : null,
       uds:   d.uds, var_uds:  d.udsp > 0 ? (d.uds - d.udsp) / d.udsp : null,
-      tc,    var_tc:    tcp   > 0 && tc   != null ? (tc   - tcp)   / tcp   : null,
-      ents:  d.ents, trans: d.trans,
+      tc,
+      tc_ant:  tcp,
+      var_tc:  (tc != null && tcp != null) ? (tc - tcp) : null,   // puntos porcentuales (diferencia)
+      ents:      d.ents,   ents_ant:  d.entsp,
+      var_ents:  d.entsp  > 0 ? (d.ents  - d.entsp)  / d.entsp  : null,
+      trans:     d.trans,  trans_ant: d.transp,
+      var_trans: d.transp > 0 ? (d.trans - d.transp) / d.transp : null,
       // raw totals needed for aggregate row
       _txp: d.txp, _udsp: d.udsp, _ent: d.ent, _entp: d.entp,
       _tx_tc: d.tx_tc, _txp_tc: d.txp_tc,
@@ -1479,12 +1497,16 @@ function renderVariacion() {
 
   if (!rows.length) {
     document.getElementById('tbody-variacion').innerHTML =
-      `<tr><td colspan="21" class="empty">Sin datos para ${anio}</td></tr>`;
+      `<tr><td colspan="26" class="empty">Sin datos para ${anio}</td></tr>`;
     return;
   }
 
   // Helpers
   const vd  = v => `<span class="${v==null?'':v>=0?'pos':'neg'}">${fDelta(v)}</span>`;
+  // Variación en puntos porcentuales (para TC): v ya es la diferencia en decimal
+  const vdPP = v => v == null
+    ? '<span>—</span>'
+    : `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${(v*100).toFixed(1)} pp</span>`;
   const cc  = c => {
     if (c == null) return '<td>—</td>';
     const p = Math.round(c * 100);
@@ -1493,14 +1515,15 @@ function renderVariacion() {
   };
 
   // Build totals accumulators
-  let tP=0, tV=0, tVp=0, tTx=0, tTxp=0, tTxTc=0, tTxpTc=0, tUds=0, tUdsp=0, tEnt=0, tEntp=0, tEnts=0, tTrans=0;
+  let tP=0, tV=0, tVp=0, tTx=0, tTxp=0, tTxTc=0, tTxpTc=0, tUds=0, tUdsp=0, tEnt=0, tEntp=0,
+      tEnts=0, tEntsp=0, tTrans=0, tTransp=0;
 
   const tbody = rows.map(r => {
     tP+=r.ppto; tV+=r.v_act; tVp+=r.v_ant;
     tTx+=r.tx; tTxp+=r._txp||0; tTxTc+=r._tx_tc||0; tTxpTc+=r._txp_tc||0;
     tUds+=r.uds; tUdsp+=r._udsp||0;
     tEnt+=r._ent||0; tEntp+=r._entp||0;
-    tEnts+=r.ents||0; tTrans+=r.trans||0;
+    tEnts+=r.ents||0; tEntsp+=r.ents_ant||0; tTrans+=r.trans||0; tTransp+=r.trans_ant||0;
     return `<tr>
       <td>${r.sucursal}</td>
       <td>${fCOP(r.ppto)}</td>
@@ -1519,10 +1542,15 @@ function renderVariacion() {
       <td>${vd(r.var_tx)}</td>
       <td>${fNum(r.uds)}</td>
       <td>${vd(r.var_uds)}</td>
-      <td>${r.tc!=null?fPct(r.tc,0):'—'}</td>
-      <td>${vd(r.var_tc)}</td>
+      <td>${r.tc!=null?fPct(r.tc,0):"—"}</td>
+      <td>${r.tc_ant!=null?fPct(r.tc_ant,0):"—"}</td>
+      <td>${vdPP(r.var_tc)}</td>
       <td>${r.ents?fNum(r.ents):'—'}</td>
+      <td>${r.ents_ant?fNum(r.ents_ant):'—'}</td>
+      <td>${vd(r.var_ents)}</td>
       <td>${r.trans?fNum(r.trans):'—'}</td>
+      <td>${r.trans_ant?fNum(r.trans_ant):'—'}</td>
+      <td>${vd(r.var_trans)}</td>
     </tr>`;
   }).join('');
 
@@ -1541,9 +1569,11 @@ function renderVariacion() {
   const tVup    = tUds  > 0 ? tV  / tUds  : null;
   const tVupp   = tUdsp > 0 ? tVp / tUdsp : null;
   const tVarVup = tVupp > 0 && tVup != null ? (tVup - tVupp) / tVupp : null;
-  const tTc     = tEnt  > 0 ? tTxTc  / tEnt  : null;
-  const tTcp    = tEntp > 0 ? tTxpTc / tEntp : null;
-  const tVarTc  = tTcp  > 0 && tTc != null ? (tTc - tTcp) / tTcp : null;
+  const tTc      = tEnt  > 0 ? tTxTc  / tEnt  : null;
+  const tTcp     = tEntp > 0 ? tTxpTc / tEntp : null;
+  const tVarTc   = (tTc != null && tTcp != null) ? (tTc - tTcp) : null;   // pp
+  const tVarEnts  = tEntsp  > 0 ? (tEnts  - tEntsp)  / tEntsp  : null;
+  const tVarTrans = tTransp > 0 ? (tTrans - tTransp) / tTransp : null;
 
   document.getElementById('tbody-variacion').innerHTML = tbody + `<tr class="total-row">
     <td>TOTAL</td>
@@ -1563,10 +1593,15 @@ function renderVariacion() {
     <td>${vd(tVarTx)}</td>
     <td>${fNum(tUds)}</td>
     <td>${vd(tVarUds)}</td>
-    <td>${tTc!=null?fPct(tTc,0):'—'}</td>
-    <td>${vd(tVarTc)}</td>
+    <td>${tTc!=null?fPct(tTc,0):"—"}</td>
+    <td>${tTcp!=null?fPct(tTcp,0):"—"}</td>
+    <td>${vdPP(tVarTc)}</td>
     <td>${tEnts?fNum(tEnts):'—'}</td>
+    <td>${tEntsp?fNum(tEntsp):'—'}</td>
+    <td>${vd(tVarEnts)}</td>
     <td>${tTrans?fNum(tTrans):'—'}</td>
+    <td>${tTransp?fNum(tTransp):'—'}</td>
+    <td>${vd(tVarTrans)}</td>
   </tr>`;
 
   // Update summary chips
