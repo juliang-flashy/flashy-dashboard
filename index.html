@@ -198,6 +198,7 @@ thead th.sort-asc::after{content:' ▲';opacity:1;color:#8B1A4A}
 thead th.sort-desc::after{content:' ▼';opacity:1;color:#8B1A4A}
 .pos{color:#1E7A4A;font-weight:600}
 .neg{color:#C92A2A;font-weight:600}
+.cov-warn{color:#D97706;font-size:11px;cursor:help;margin-left:3px;font-weight:700}
 .total-row td{font-weight:700;background:#E8C4D4;color:#111;font-size:13px;border-top:2px solid #8B1A4A}
 #hist-total-wrap{overflow-x:hidden;border-top:2px solid #8B1A4A;flex-shrink:0}
 #hist-total-wrap table{border-collapse:collapse;font-size:13px}
@@ -1432,6 +1433,8 @@ function renderVariacion() {
         s.ent   += (r.transacciones || 0) / tc;  // reconstruir entradas
         s.tx_tc += r.transacciones || 0;          // solo días con contador
       }
+      if ((r.entradas    || 0) > 0) s.dEntA = (s.dEntA || 0) + 1;
+      if ((r.transeuntes || 0) > 0) s.dTraA = (s.dTraA || 0) + 1;
     } else {
       s.vp     += r.ventas_netas  || 0;
       s.txp    += r.transacciones || 0;
@@ -1442,6 +1445,8 @@ function renderVariacion() {
         s.entp   += (r.transacciones || 0) / tc;
         s.txp_tc += r.transacciones || 0;
       }
+      if ((r.entradas    || 0) > 0) s.dEntP = (s.dEntP || 0) + 1;
+      if ((r.transeuntes || 0) > 0) s.dTraP = (s.dTraP || 0) + 1;
     }
   });
 
@@ -1478,6 +1483,7 @@ function renderVariacion() {
       // raw totals needed for aggregate row
       _txp: d.txp, _udsp: d.udsp, _ent: d.ent, _entp: d.entp,
       _tx_tc: d.tx_tc, _txp_tc: d.txp_tc,
+      _dEntA: d.dEntA||0, _dEntP: d.dEntP||0, _dTraA: d.dTraA||0, _dTraP: d.dTraP||0,
     };
   }).sort((a,b) => {
     const va = a[varSort.col], vb = b[varSort.col];
@@ -1507,6 +1513,15 @@ function renderVariacion() {
   const vdPP = v => v == null
     ? '<span>—</span>'
     : `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${(v*100).toFixed(1)} pp</span>`;
+  // Marca ⚠ cuando la cobertura de días con datos de conteo es dispareja entre años
+  const covWarn = (dA, dP, lblA, lblP) => {
+    const mn = Math.min(dA, dP), mx = Math.max(dA, dP);
+    if (mx === 0) return '';
+    if (mn === 0 || (mn / mx < 0.7 && mx - mn >= 3)) {
+      return ` <span class="cov-warn" title="Variación poco confiable: cobertura de conteos dispareja — ${lblA}: ${dA} día(s) con datos, ${lblP}: ${dP} día(s). El resto de días no tienen registro de sensor, así que el % compara periodos de distinto tamaño.">⚠</span>`;
+    }
+    return '';
+  };
   const cc  = c => {
     if (c == null) return '<td>—</td>';
     const p = Math.round(c * 100);
@@ -1516,7 +1531,7 @@ function renderVariacion() {
 
   // Build totals accumulators
   let tP=0, tV=0, tVp=0, tTx=0, tTxp=0, tTxTc=0, tTxpTc=0, tUds=0, tUdsp=0, tEnt=0, tEntp=0,
-      tEnts=0, tEntsp=0, tTrans=0, tTransp=0;
+      tEnts=0, tEntsp=0, tTrans=0, tTransp=0, tDEntA=0, tDEntP=0, tDTraA=0, tDTraP=0;
 
   const tbody = rows.map(r => {
     tP+=r.ppto; tV+=r.v_act; tVp+=r.v_ant;
@@ -1524,6 +1539,7 @@ function renderVariacion() {
     tUds+=r.uds; tUdsp+=r._udsp||0;
     tEnt+=r._ent||0; tEntp+=r._entp||0;
     tEnts+=r.ents||0; tEntsp+=r.ents_ant||0; tTrans+=r.trans||0; tTransp+=r.trans_ant||0;
+    tDEntA+=r._dEntA||0; tDEntP+=r._dEntP||0; tDTraA+=r._dTraA||0; tDTraP+=r._dTraP||0;
     return `<tr>
       <td>${r.sucursal}</td>
       <td>${fCOP(r.ppto)}</td>
@@ -1544,13 +1560,13 @@ function renderVariacion() {
       <td>${vd(r.var_uds)}</td>
       <td>${r.tc!=null?fPct(r.tc,0):"—"}</td>
       <td>${r.tc_ant!=null?fPct(r.tc_ant,0):"—"}</td>
-      <td>${vdPP(r.var_tc)}</td>
+      <td>${vdPP(r.var_tc)}${covWarn(r._dEntA, r._dEntP, anio, anioAnt)}</td>
       <td>${r.ents?fNum(r.ents):'—'}</td>
       <td>${r.ents_ant?fNum(r.ents_ant):'—'}</td>
-      <td>${vd(r.var_ents)}</td>
+      <td>${vd(r.var_ents)}${covWarn(r._dEntA, r._dEntP, anio, anioAnt)}</td>
       <td>${r.trans?fNum(r.trans):'—'}</td>
       <td>${r.trans_ant?fNum(r.trans_ant):'—'}</td>
-      <td>${vd(r.var_trans)}</td>
+      <td>${vd(r.var_trans)}${covWarn(r._dTraA, r._dTraP, anio, anioAnt)}</td>
     </tr>`;
   }).join('');
 
@@ -1595,13 +1611,13 @@ function renderVariacion() {
     <td>${vd(tVarUds)}</td>
     <td>${tTc!=null?fPct(tTc,0):"—"}</td>
     <td>${tTcp!=null?fPct(tTcp,0):"—"}</td>
-    <td>${vdPP(tVarTc)}</td>
+    <td>${vdPP(tVarTc)}${covWarn(tDEntA, tDEntP, anio, anioAnt)}</td>
     <td>${tEnts?fNum(tEnts):'—'}</td>
     <td>${tEntsp?fNum(tEntsp):'—'}</td>
-    <td>${vd(tVarEnts)}</td>
+    <td>${vd(tVarEnts)}${covWarn(tDEntA, tDEntP, anio, anioAnt)}</td>
     <td>${tTrans?fNum(tTrans):'—'}</td>
     <td>${tTransp?fNum(tTransp):'—'}</td>
-    <td>${vd(tVarTrans)}</td>
+    <td>${vd(tVarTrans)}${covWarn(tDTraA, tDTraP, anio, anioAnt)}</td>
   </tr>`;
 
   // Update summary chips
