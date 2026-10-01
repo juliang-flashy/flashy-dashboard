@@ -785,6 +785,17 @@ let selSuc = new Set(); // empty = todas las tiendas
 let selAnio = new Set(); // empty = todos los años
 let selMes = new Set(); // empty = año completo
 
+// Tiendas cerradas: se ocultan solas cuando todo el periodo filtrado es desde su mes de cierre
+const TIENDAS_CERRADAS = { 'City Plaza': '2026-10' };
+
+function cerradaEnPeriodo(suc) {
+  const cierre = TIENDAS_CERRADAS[suc];
+  if (!cierre) return false;
+  const years  = selAnio.size ? [...selAnio] : ALL_YEARS;
+  const months = selMes.size  ? [...selMes]  : [1,2,3,4,5,6,7,8,9,10,11,12];
+  return years.every(y => months.every(m => `${y}-${String(m).padStart(2,'0')}` >= cierre));
+}
+
 const PIE_COLORS = [
   '#8B1A4A','#2563EB','#059669','#D97706','#7C3AED',
   '#DC2626','#0891B2','#65A30D','#C026D3','#EA580C',
@@ -1901,7 +1912,7 @@ function renderHistorico() {
       const g = tr.dataset.group.replace(/^[▶▼] /,'');
       if (histCollapsed.has(g)) histCollapsed.delete(g);
       else histCollapsed.add(g);
-      renderHistorico();
+      renderActive();
     });
   });
 }
@@ -2227,10 +2238,25 @@ function switchTab(tab) {
 }
 
 function renderActive() {
-  if (activeTab === 'overview')    renderOverview();
-  if (activeTab === 'variacion')   renderVariacion();
-  if (activeTab === 'historico')   renderHistorico();
-  if (activeTab === 'comparativo') renderComparativo();
+  // Excluir tiendas cerradas del periodo sin modificar la selección del usuario.
+  // Comparativo es histórico multi-año, ahí se mantienen.
+  const selSucUsuario = selSuc;
+  const ocultas = activeTab === 'comparativo' ? [] : ALL_SUC.filter(cerradaEnPeriodo);
+  const base = selSuc.size ? [...selSuc] : ALL_SUC;
+  const efectivo = base.filter(s => !ocultas.includes(s));
+  const aplicar = ocultas.length > 0 && efectivo.length > 0;
+  document.querySelectorAll('.ms-suc-cb').forEach(cb => {
+    cb.closest('label').style.display = aplicar && ocultas.includes(cb.value) ? 'none' : '';
+  });
+  if (aplicar) selSuc = new Set(efectivo);
+  try {
+    if (activeTab === 'overview')    renderOverview();
+    if (activeTab === 'variacion')   renderVariacion();
+    if (activeTab === 'historico')   renderHistorico();
+    if (activeTab === 'comparativo') renderComparativo();
+  } finally {
+    selSuc = selSucUsuario;
+  }
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────────
@@ -2266,11 +2292,11 @@ document.querySelectorAll('.nav-btn').forEach(btn =>
   btn.addEventListener('click', () => switchTab(btn.dataset.tab))
 );
 
-document.getElementById('f-h-dia-desde').addEventListener('change', renderHistorico);
-document.getElementById('f-h-dia-hasta').addEventListener('change', renderHistorico);
+document.getElementById('f-h-dia-desde').addEventListener('change', renderActive);
+document.getElementById('f-h-dia-hasta').addEventListener('change', renderActive);
 
-document.getElementById('f-v-dia-desde').addEventListener('change', renderVariacion);
-document.getElementById('f-v-dia-hasta').addEventListener('change', renderVariacion);
+document.getElementById('f-v-dia-desde').addEventListener('change', renderActive);
+document.getElementById('f-v-dia-hasta').addEventListener('change', renderActive);
 
 // Sync horizontal scroll: historico table ↔ total row
 (function(){
@@ -2294,7 +2320,7 @@ document.getElementById('table-historico').addEventListener('click', e => {
   } else {
     histSort.col = col; histSort.dir = -1;               // nueva columna → desc
   }
-  renderHistorico();
+  renderActive();
 });
 
 // Sort columns in variacion table
@@ -2304,7 +2330,7 @@ document.getElementById('table-variacion').addEventListener('click', e => {
   const col = th.dataset.sort;
   if (varSort.col === col) varSort.dir *= -1;
   else { varSort.col = col; varSort.dir = -1; }
-  renderVariacion();
+  renderActive();
 });
 
 ﻿// --- Planes de Accion ---
