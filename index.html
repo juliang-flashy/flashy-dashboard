@@ -2459,6 +2459,42 @@ async function _loadData(){
   const d = await fetch('./data.json?v=' + Date.now()).then(r => r.json());
   DATA = d;
   _initApp();
+  _iniciarAutoRefresco();
+}
+// Auto-refresco: cada 2 min (y al volver a la pestaña) revisa version.json, que pesa
+// unos bytes; solo si cambió baja data.json y redibuja sin perder pestaña ni filtros.
+let _autoRefrescoActivo = false;
+function _iniciarAutoRefresco(){
+  if (_autoRefrescoActivo) return;
+  _autoRefrescoActivo = true;
+  setInterval(_refrescarSiHayNuevo, 120000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) _refrescarSiHayNuevo(); });
+}
+async function _refrescarSiHayNuevo(){
+  if (!DATA || document.hidden) return;
+  try {
+    const v = await fetch('./version.json?v=' + Date.now(), {cache: 'no-store'}).then(r => r.ok ? r.json() : null);
+    if (!v || v.actualizado === DATA.actualizado) return;
+    const d = await fetch('./data.json?v=' + Date.now(), {cache: 'no-store'}).then(r => r.json());
+    if (d.actualizado === DATA.actualizado) return;
+    DATA = d;
+    H = d.historico; VAR = d.variacion; AREA = d.area; ACC = d.acciones || [];
+    ALL_YEARS = [...new Set(H.map(r => +r.fecha.slice(0,4)))].sort();
+    ALL_SUC   = [...new Set(H.map(r => r.sucursal))].sort();
+    document.getElementById('lbl-corte').textContent = DATA.fecha_fin + ' · ' + DATA.actualizado.split(' ')[1];
+    renderActive();
+    if (activeTab === 'acciones') renderAcciones();
+    _avisoActualizado(DATA.actualizado.split(' ')[1]);
+  } catch (e) { console.warn('Auto-refresco:', e); }
+}
+function _avisoActualizado(hora){
+  const t = document.createElement('div');
+  t.textContent = 'Datos actualizados · ' + hora;
+  t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#6B1236;color:#fff;' +
+    'padding:10px 18px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.25);z-index:9998;' +
+    'transition:opacity .5s';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 600); }, 4000);
 }
 (async function initLogin(){
   const HASH = "e68432a0669ca566c306d8672bbd2669f00b7c0eb2d8269dbb320d2d53d07e50";
