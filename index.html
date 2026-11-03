@@ -47,6 +47,12 @@ body{background:#F9EEF3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',
   padding:6px 12px;font-size:13px;background:#fff;color:#1C1C1E;outline:none;
   appearance:none;-webkit-appearance:none;cursor:pointer;min-width:160px}
 .filter-group select:focus{border-color:#8B1A4A}
+.rango-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.filter-group .rango-row input[type=date]{min-width:140px;padding:5px 10px}
+.rango-sep{font-size:12px;color:#8B1A4A;font-weight:600}
+.rango-clear{border:none;background:#F5EDF0;color:#8B1A4A;border-radius:8px;
+  padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.filter-off{opacity:.4;pointer-events:none}
 
 /* Multi-select tienda */
 .multi-select-wrap{position:relative}
@@ -458,6 +464,15 @@ thead th{line-height:1.3}
         <div id="ms-mes-items"></div>
       </div>
     </div>
+    <div class="filter-group" id="rango-wrap">
+      <label>RANGO DE FECHAS</label>
+      <div class="rango-row">
+        <input type="date" id="f-rango-desde" title="Desde">
+        <span class="rango-sep">a</span>
+        <input type="date" id="f-rango-hasta" title="Hasta">
+        <button type="button" class="rango-clear" id="f-rango-clear" title="Quitar rango y volver a AÑO/MES">Quitar</button>
+      </div>
+    </div>
   </div>
 
   <!-- ═══ TAB: OVERVIEW ═══ -->
@@ -784,6 +799,33 @@ let histSort = { col: null, dir: 0 }; // null = orden original; dir: -1 desc, 1 
 let selSuc = new Set(); // empty = todas las tiendas
 let selAnio = new Set(); // empty = todos los años
 let selMes = new Set(); // empty = año completo
+let rango = null; // {desde, hasta} 'YYYY-MM-DD'; si está activo reemplaza a AÑO/MES
+
+function shiftAnio(f, n) { return (+f.slice(0,4) + n) + f.slice(4,10); }
+// off=0: la fecha cae en el rango; off=1: cae en el mismo rango del año anterior
+function enRango(f, off) {
+  const g = off ? shiftAnio(f, off) : f.slice(0,10);
+  return g >= rango.desde && g <= rango.hasta;
+}
+function fCorta(f) { return f.slice(8,10) + '/' + f.slice(5,7); }
+function fLarga(f) { return fCorta(f) + '/' + f.slice(0,4); }
+function onRangoChange() {
+  const d = document.getElementById('f-rango-desde').value;
+  const h = document.getElementById('f-rango-hasta').value;
+  rango = (d && h) ? (d <= h ? {desde:d, hasta:h} : {desde:h, hasta:d}) : null;
+  aplicarModoRango(); renderActive();
+}
+function limpiarRango() {
+  document.getElementById('f-rango-desde').value = '';
+  document.getElementById('f-rango-hasta').value = '';
+  rango = null; aplicarModoRango(); renderActive();
+}
+function aplicarModoRango() {
+  ['anio-wrap','mes-wrap'].forEach(id =>
+    document.getElementById(id).classList.toggle('filter-off', !!rango));
+  const algo = document.getElementById('f-rango-desde').value || document.getElementById('f-rango-hasta').value;
+  document.getElementById('f-rango-clear').style.visibility = algo ? 'visible' : 'hidden';
+}
 
 // Tiendas cerradas: se ocultan solas cuando todo el periodo filtrado es desde su mes de cierre
 const TIENDAS_CERRADAS = { 'City Plaza': '2026-10' };
@@ -791,6 +833,7 @@ const TIENDAS_CERRADAS = { 'City Plaza': '2026-10' };
 function cerradaEnPeriodo(suc) {
   const cierre = TIENDAS_CERRADAS[suc];
   if (!cierre) return false;
+  if (rango) return rango.desde.slice(0,7) >= cierre;
   const years  = selAnio.size ? [...selAnio] : ALL_YEARS;
   const months = selMes.size  ? [...selMes]  : [1,2,3,4,5,6,7,8,9,10,11,12];
   return years.every(y => months.every(m => `${y}-${String(m).padStart(2,'0')}` >= cierre));
@@ -987,6 +1030,7 @@ function onMesCb(cb) {
 
 // ─── Filters ───────────────────────────────────────────────────────────────
 function getState() {
+  if (rango) return { anio: +rango.hasta.slice(0,4), mes: 0 };
   return {
     anio: selAnio.size === 1 ? [...selAnio][0] : (selAnio.size === 0 ? 0 : -1),
     mes:  selMes.size === 1 ? [...selMes][0] : (selMes.size === 0 ? 0 : -1),
@@ -998,6 +1042,7 @@ function filterH(sucursales, anio, mes) {
     const y = +r.fecha.slice(0,4);
     const m = +r.fecha.slice(5,7);
     if (sucursales && sucursales.size > 0 && !sucursales.has(r.sucursal)) return false;
+    if (rango) return enRango(r.fecha, getState().anio - anio);
     if (anio === -1) { if (!selAnio.has(y)) return false; }
     else if (anio && y !== anio) return false;
     if (mes === -1) { if (!selMes.has(m)) return false; }
@@ -1159,7 +1204,7 @@ function renderDailyChart(anio, mes, sucursal) {
   const placeholder = document.getElementById('daily-placeholder');
   const canvas      = document.getElementById('chart-diario');
 
-  if (!mes) {
+  if (!mes && !rango) {
     placeholder.style.display = 'block';
     canvas.style.display = 'none';
     if (chartDaily) { chartDaily.destroy(); chartDaily = null; }
@@ -1169,6 +1214,25 @@ function renderDailyChart(anio, mes, sucursal) {
 
   placeholder.style.display = 'none';
   canvas.style.display = 'block';
+  let labels, curVals, prevVals, tickCb, titleCb;
+  if (rango) {
+    document.getElementById('daily-subtitle').textContent =
+      fLarga(rango.desde) + ' al ' + fLarga(rango.hasta) + ' — día a día';
+    const curF = {}, prevF = {};
+    H.forEach(r => {
+      if (sucursal.size > 0 && !sucursal.has(r.sucursal)) return;
+      const f = r.fecha.slice(0,10);
+      if (enRango(f, 0)) curF[f] = (curF[f] || 0) + (r.ventas_netas || 0);
+      else if (enRango(f, 1)) { const k = shiftAnio(f, 1); prevF[k] = (prevF[k] || 0) + (r.ventas_netas || 0); }
+    });
+    const fechas = [...new Set([...Object.keys(curF), ...Object.keys(prevF)])].sort();
+    labels   = fechas.map(fCorta);
+    curVals  = fechas.map(f => curF[f]  ?? null);
+    prevVals = fechas.map(f => prevF[f] ?? null);
+    const paso = Math.max(1, Math.ceil(fechas.length / 15));
+    tickCb  = (_, i) => i % paso === 0 ? labels[i] : '';
+    titleCb = items => fLarga(fechas[items[0].dataIndex]);
+  } else {
   document.getElementById('daily-subtitle').textContent =
     MESES_FULL[mes] + ' — día a día';
 
@@ -1189,9 +1253,12 @@ function renderDailyChart(anio, mes, sucursal) {
   const allDays = [...new Set([...Object.keys(curD), ...Object.keys(prevD)])]
     .map(Number).sort((a,b) => a-b);
 
-  const labels  = allDays.map(d => String(d));
-  const curVals  = allDays.map(d => curD[d]  ?? null);
-  const prevVals = allDays.map(d => prevD[d] ?? null);
+  labels   = allDays.map(d => String(d));
+  curVals  = allDays.map(d => curD[d]  ?? null);
+  prevVals = allDays.map(d => prevD[d] ?? null);
+  tickCb   = (_, i) => allDays[i] % 5 === 0 || allDays[i] === 1 ? allDays[i] : '';
+  titleCb  = items => 'Día ' + items[0].label + ' — ' + MESES_FULL[mes];
+  }
 
   const ctx = canvas.getContext('2d');
   if (chartDaily) chartDaily.destroy();
@@ -1219,14 +1286,14 @@ function renderDailyChart(anio, mes, sucursal) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            title: items => 'Día ' + items[0].label + ' — ' + MESES_FULL[mes],
+            title: titleCb,
             label: ctx => ' ' + ctx.dataset.label + ': ' + fCOPFull(ctx.raw)
           }
         }
       },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 },
-          callback: (_, i) => allDays[i] % 5 === 0 || allDays[i] === 1 ? allDays[i] : '' }},
+          callback: tickCb }},
         y: { grid: { color: '#F5EDF0' }, ticks: {
           font: { size: 10 },
           callback: v => '$' + fmt.format(Math.round(v))
@@ -1312,10 +1379,13 @@ function renderBranchMetrics(anio, mes) {
     const y = +r.fecha.slice(0,4);
     const m = +r.fecha.slice(5,7);
     if (selSuc.size > 0 && !selSuc.has(r.sucursal)) return;
-    if (mes && m !== mes) return;
+    if (!rango && mes && m !== mes) return;
+    const esCur  = rango ? enRango(r.fecha, 0) : y === anio;
+    const esPrev = rango ? enRango(r.fecha, 1) : y === anio - 1;
+    if (rango && !esCur && !esPrev) return;
     if (!byS[r.sucursal]) byS[r.sucursal] = {v:0, p:0, vp:0};
-    if (y === anio)     { byS[r.sucursal].v += r.ventas_netas||0; byS[r.sucursal].p += r.presupuesto||0; }
-    if (y === anio - 1)   byS[r.sucursal].vp += r.ventas_netas||0;
+    if (esCur)  { byS[r.sucursal].v += r.ventas_netas||0; byS[r.sucursal].p += r.presupuesto||0; }
+    if (esPrev)   byS[r.sucursal].vp += r.ventas_netas||0;
   });
 
   const sucursales = Object.keys(byS)
@@ -1353,10 +1423,13 @@ function renderOnlineMetrics(anio, mes) {
     if (!ONLINE.includes(r.sucursal)) return;
     const y = +r.fecha.slice(0,4);
     const m = +r.fecha.slice(5,7);
-    if (mes && m !== mes) return;
+    if (!rango && mes && m !== mes) return;
+    const esCur  = rango ? enRango(r.fecha, 0) : y === anio;
+    const esPrev = rango ? enRango(r.fecha, 1) : y === anio - 1;
+    if (rango && !esCur && !esPrev) return;
     if (!byS[r.sucursal]) byS[r.sucursal] = {v:0, p:0, vp:0};
-    if (y === anio)     { byS[r.sucursal].v += r.ventas_netas||0; byS[r.sucursal].p += r.presupuesto||0; }
-    if (y === anio - 1)   byS[r.sucursal].vp += r.ventas_netas||0;
+    if (esCur)  { byS[r.sucursal].v += r.ventas_netas||0; byS[r.sucursal].p += r.presupuesto||0; }
+    if (esPrev)   byS[r.sucursal].vp += r.ventas_netas||0;
   });
 
   const canales = ONLINE.filter(s => byS[s]);
@@ -1405,7 +1478,11 @@ function renderVariacion() {
   const hint   = document.getElementById('var-day-hint');
   const desdeEl = document.getElementById('f-v-dia-desde');
   const hastaEl = document.getElementById('f-v-dia-hasta');
-  if (mes > 0) {
+  if (rango) {
+    desdeEl.disabled = true; hastaEl.disabled = true;
+    hint.textContent = `Usando rango ${fLarga(rango.desde)} al ${fLarga(rango.hasta)}`;
+    hint.style.color = '#8B1A4A';
+  } else if (mes > 0) {
     desdeEl.disabled = false; hastaEl.disabled = false;
     hint.textContent = `Filtrando días ${dDesde} al ${dHasta} de ${MESES_FULL[mes]}`;
     hint.style.color = '#8B1A4A';
@@ -1422,10 +1499,17 @@ function renderVariacion() {
     const y = +r.fecha.slice(0,4);
     const m = +r.fecha.slice(5,7);
     const d = +r.fecha.slice(8,10);
-    if (mes === -1) { if (!selMes.has(m)) return; }
-    else if (mes && m !== mes) return;
-    if (mes > 0 && (d < dDesde || d > dHasta)) return;
-    if (y !== anio && y !== anioAnt) return;
+    let esCur;
+    if (rango) {
+      esCur = enRango(r.fecha, 0);
+      if (!esCur && !enRango(r.fecha, 1)) return;
+    } else {
+      if (mes === -1) { if (!selMes.has(m)) return; }
+      else if (mes && m !== mes) return;
+      if (mes > 0 && (d < dDesde || d > dHasta)) return;
+      if (y !== anio && y !== anioAnt) return;
+      esCur = y === anio;
+    }
 
     if (!bySuc[r.sucursal]) bySuc[r.sucursal] = {
       p:0, v:0, tx:0, tx_tc:0, uds:0, ent:0, ents:0, trans:0,  // año actual
@@ -1433,7 +1517,7 @@ function renderVariacion() {
     };
     const s = bySuc[r.sucursal];
     const tc = r.TC || 0;
-    if (y === anio) {
+    if (esCur) {
       s.p   += r.presupuesto   || 0;
       s.v   += r.ventas_netas  || 0;
       s.tx  += r.transacciones || 0;
@@ -1674,7 +1758,11 @@ function renderHistorico() {
     document.getElementById('tfoot-historico').innerHTML = '';
     return;
   }
-  if (mes > 0) {
+  if (rango) {
+    desdeEl.disabled = true; hastaEl.disabled = true;
+    hint.textContent = `Usando rango ${fLarga(rango.desde)} al ${fLarga(rango.hasta)}`;
+    hint.style.color = '#8B1A4A';
+  } else if (mes > 0) {
     desdeEl.disabled = false; hastaEl.disabled = false;
     hint.textContent = `Filtrando días ${dDesde} al ${dHasta} de ${MESES_FULL[mes]}`;
     hint.style.color = '#8B1A4A';
@@ -1687,6 +1775,7 @@ function renderHistorico() {
   // Filter rows
   const rows = H.filter(r => {
     if (selSuc.size > 0 && !selSuc.has(r.sucursal)) return false;
+    if (rango) return enRango(r.fecha, 0);
     if (+r.fecha.slice(0,4) !== anio) return false;
     const m = +r.fecha.slice(5,7);
     if (mes && m !== mes) return false;
@@ -1753,7 +1842,7 @@ function renderHistorico() {
   };
 
   // Sort solo disponible con un único mes seleccionado
-  const canSort = mes > 0;
+  const canSort = mes > 0 || !!rango;
   const isActive = canSort && histSort.col && histSort.dir !== 0;
 
   // Sort sucursales: histSort si activo, si no por presupuesto desc
@@ -1822,7 +1911,7 @@ function renderHistorico() {
         const cp = cumpl != null ? Math.round(cumpl*100) : null;
         const ccCls  = cp!=null?(cp>=100?'cumpl-ok':cp>=90?'cumpl-mid':'cumpl-low'):'';
         html += `<tr class="hist-day" data-parent="${suc}">
-          <td>${day}</td>
+          <td>${rango ? fCorta(r.fecha) : day}</td>
           <td>${fCOP(r.presupuesto)}</td>
           <td>${fCOP(r.ventas_netas)}</td>
           <td class="${brecha>=0?'pos':'neg'}">${fCOP(brecha)}</td>
@@ -1925,6 +2014,7 @@ function exportHistoricoXLSX() {
 
   const rows = H.filter(r => {
     if (selSuc.size > 0 && !selSuc.has(r.sucursal)) return false;
+    if (rango) return enRango(r.fecha, 0);
     if (+r.fecha.slice(0,4) !== anio) return false;
     const m = +r.fecha.slice(5,7);
     if (mes && m !== mes) return false;
@@ -1999,7 +2089,7 @@ function exportHistoricoXLSX() {
   }
 
   XLSX.utils.book_append_sheet(wb, ws, 'Histórico');
-  const label = mes ? `${anio}-${String(mes).padStart(2,'0')}` : String(anio);
+  const label = rango ? `${rango.desde}_a_${rango.hasta}` : (mes ? `${anio}-${String(mes).padStart(2,'0')}` : String(anio));
   XLSX.writeFile(wb, `historico_flashy_${label}.xlsx`);
 }
 
@@ -2268,6 +2358,12 @@ function _initApp() {
   ALL_YEARS = [...new Set(H.map(r => +r.fecha.slice(0,4)))].sort();
   ALL_SUC   = [...new Set(H.map(r => r.sucursal))].sort();
   populateFilters();
+  const _fs = H.map(r => r.fecha.slice(0,10)).sort();
+  ['f-rango-desde','f-rango-hasta'].forEach(id => {
+    const el = document.getElementById(id);
+    el.min = _fs[0]; el.max = _fs[_fs.length - 1];
+  });
+  aplicarModoRango();
   renderActive();
 }
 
@@ -2298,6 +2394,10 @@ document.getElementById('f-h-dia-hasta').addEventListener('change', renderActive
 document.getElementById('f-v-dia-desde').addEventListener('change', renderActive);
 document.getElementById('f-v-dia-hasta').addEventListener('change', renderActive);
 
+document.getElementById('f-rango-desde').addEventListener('change', onRangoChange);
+document.getElementById('f-rango-hasta').addEventListener('change', onRangoChange);
+document.getElementById('f-rango-clear').addEventListener('click', limpiarRango);
+
 // Sync horizontal scroll: historico table ↔ total row
 (function(){
   const scroll = document.getElementById('hist-scroll');
@@ -2312,7 +2412,7 @@ document.getElementById('table-historico').addEventListener('click', e => {
   const th = e.target.closest('th[data-sort]');
   if (!th) return;
   const {mes} = getState();
-  if (mes <= 0) return;
+  if (mes <= 0 && !rango) return;
   const col = th.dataset.sort;
   if (histSort.col === col) {
     if (histSort.dir === -1)  histSort.dir = 1;          // desc → asc
